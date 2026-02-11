@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "type": "module",
-   "scripts": {
+  "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@supabase/supabase-js": "^2.95.3",
     "axios": "^1.13.5",
     "cors": "^2.8.6",
