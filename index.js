@@ -162,6 +162,8 @@ app.post("/api/clip", async (req, res) => {
 // ================================
 // Start Server
 // ================================
-app.listen(process.env.PORT || 5000, () => {
-  console.log("🚀 FFmpeg Clip Server Running on Port 5000");
+const PORT = process.env.PORT || 5000; // fallback for local dev
+
+app.listen(PORT, () => {
+  console.log(`🚀 FFmpeg Clip Server Running on Port ${PORT}`);
 });
