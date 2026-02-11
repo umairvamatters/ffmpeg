@@ -1,3 +1,4 @@
 clips/
 temp/
 node_modules/
+.env
