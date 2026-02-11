@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
-
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
@@ -14,7 +14,7 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 // ================================
 // Supabase Setup
 // ================================
