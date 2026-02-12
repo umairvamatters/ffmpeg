@@ -5,13 +5,21 @@ import { PassThrough } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-ffmpeg.setFfmpegPath("/usr/bin/ffmpeg");
+import { execSync } from "child_process";
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+const ffmpegPath = (() => {
+  try {
+    return execSync("which ffmpeg").toString().trim(); // Mac/Linux
+  } catch {
+    return "C:\\ffmpeg\\bin\\ffmpeg.exe"; // Windows fallback (adjust your path)
+  }
+})();
 
+ffmpeg.setFfmpegPath(ffmpegPath);
 // ================================
 // Supabase Setup
 // ================================

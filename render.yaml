@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: ffmpeg-clip-server
+    runtime: node
+    buildCommand: sudo apt-get install -y ffmpeg && npm install
+    startCommand: node server.js
