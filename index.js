@@ -4,15 +4,13 @@ import ffmpeg from "fluent-ffmpeg";
 import { PassThrough } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
-import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import { createClient } from "@supabase/supabase-js";
-
+ffmpeg.setFfmpegPath("/usr/bin/ffmpeg");
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 // ================================
 // Supabase Setup
