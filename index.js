@@ -1,9 +1,7 @@
 import express from "express";
 import cors from "cors";
-import axios from "axios";
 import ffmpeg from "fluent-ffmpeg";
-import fs from "fs";
-import path from "path";
+import { PassThrough } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
@@ -13,54 +11,31 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
 // ================================
 // Supabase Setup
 // ================================
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }
 );
 
 const BUCKET = process.env.SUPABASE_BUCKET || "clips";
 
 // ================================
-// Local folders
-// ================================
-const TEMP_DIR = "./temp";
-const OUTPUT_DIR = "./clips";
-
-if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR);
-if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
-
-// ================================
-// Upload Trimmed Clip to Supabase
-// ================================
-async function uploadClipToSupabase(filePath) {
-  const fileBuffer = fs.readFileSync(filePath);
-
-  const fileName = `final/${path.basename(filePath)}`;
-
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(fileName, fileBuffer, {
-      contentType: "video/mp4",
-      upsert: true,
-    });
-
-  if (error) throw error;
-
-  // Get public URL
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(fileName);
-
-  return data.publicUrl;
-}
-
-// ================================
 // POST /api/clip
 // ================================
 app.post("/api/clip", async (req, res) => {
+  const startTotalTime = Date.now();
+  
   try {
     const { videoUrl, startTime, endTime, format, resolution } = req.body;
 
@@ -73,81 +48,133 @@ app.post("/api/clip", async (req, res) => {
     console.log("🎬 Clip Request Received:", req.body);
 
     const id = uuidv4();
-
-    // Local paths
-    const inputPath = path.join(TEMP_DIR, `${id}.mp4`);
-    const outputPath = path.join(
-      OUTPUT_DIR,
-      `${id}.${format || "mp4"}`
-    );
+    const fileName = `final/${id}.${format || "mp4"}`;
 
     // ================================
-    // Step 1: Download Video (Temporary Local Only)
+    // Create PassThrough Stream for FFmpeg Output
     // ================================
-    console.log("⬇️ Downloading video temporarily...");
+    const outputStream = new PassThrough();
+    const chunks = [];
 
-    const response = await axios({
-      url: videoUrl,
-      method: "GET",
-      responseType: "stream",
+    // Collect stream data
+    outputStream.on("data", (chunk) => {
+      chunks.push(chunk);
     });
 
-    const writer = fs.createWriteStream(inputPath);
-    response.data.pipe(writer);
-
-    await new Promise((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
-
-    console.log("✅ Video downloaded locally");
+    console.log("✂️ Trimming clip from URL (no local storage)...");
+    const ffmpegStartTime = Date.now();
 
     // ================================
-    // Step 2: Trim Clip with FFmpeg
+    // FFmpeg: Direct URL Input → Stream Output
     // ================================
-    console.log("✂️ Trimming clip...");
-
     await new Promise((resolve, reject) => {
-      ffmpeg(inputPath)
+      let ffmpegFinished = false;
+      let streamFinished = false;
+      
+      const checkBothFinished = () => {
+        if (ffmpegFinished && streamFinished) {
+          const ffmpegDuration = ((Date.now() - ffmpegStartTime) / 1000).toFixed(2);
+          console.log(`✅ Both FFmpeg and Stream completed (took ${ffmpegDuration}s)`);
+          resolve();
+        }
+      };
+      
+      const command = ffmpeg(videoUrl)
         .setStartTime(startTime)
         .setDuration(endTime - startTime)
         .size(resolution || "1080x1920")
         .outputOptions([
-          "-preset fast",
-          "-movflags +faststart",
+          "-preset ultrafast",
+          "-movflags frag_keyframe+empty_moov",
           "-c:v libx264",
           "-c:a aac",
+          "-f mp4",
         ])
-        .on("end", resolve)
-        .on("error", reject)
-        .save(outputPath);
+        .on("start", (cmd) => {
+          console.log("🎥 FFmpeg started");
+        })
+        .on("progress", (progress) => {
+          if (progress.percent) {
+            console.log(`⏳ Processing: ${progress.percent.toFixed(1)}%`);
+          }
+        })
+        .on("end", () => {
+          console.log("✅ FFmpeg completed");
+          ffmpegFinished = true;
+          checkBothFinished();
+        })
+        .on("error", (err) => {
+          console.error("❌ FFmpeg Error:", err.message);
+          reject(err);
+        });
+
+      // Wait for stream to finish collecting all data
+      outputStream.on("finish", () => {
+        console.log(`✅ Stream finished collecting data`);
+        streamFinished = true;
+        checkBothFinished();
+      });
+
+      outputStream.on("error", reject);
+
+      // Pipe to stream
+      command.pipe(outputStream, { end: true });
     });
 
-    console.log("✅ Clip created:", outputPath);
+    // ================================
+    // Prepare Buffer
+    // ================================
+    console.log("📦 Preparing buffer...");
+    const bufferStartTime = Date.now();
+    
+    const fileBuffer = Buffer.concat(chunks);
+    const bufferSize = (fileBuffer.length / 1024 / 1024).toFixed(2);
+    const bufferDuration = ((Date.now() - bufferStartTime) / 1000).toFixed(2);
+    
+    console.log(`📦 Buffer ready: ${bufferSize} MB (took ${bufferDuration}s)`);
+
+    if (fileBuffer.length === 0) {
+      throw new Error("FFmpeg produced empty buffer");
+    }
 
     // ================================
-    // Step 3: Upload ONLY Trimmed Clip to Supabase
+    // Upload to Supabase
     // ================================
-    console.log("☁ Uploading trimmed clip to Supabase...");
+    console.log("☁️ Starting upload to Supabase...");
+    const uploadStartTime = Date.now();
 
-    const clipUrl = await uploadClipToSupabase(outputPath);
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(fileName, fileBuffer, {
+        contentType: "video/mp4",
+        upsert: true,
+      });
 
-    console.log("✅ Clip uploaded:", clipUrl);
+    const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
+    console.log(`⏱️ Upload took ${uploadDuration}s`);
+
+    if (uploadError) {
+      console.error("❌ Supabase Upload Error:", uploadError);
+      throw new Error(`Supabase upload failed: ${uploadError.message}`);
+    }
+
+    console.log("✅ Upload successful");
+
+    // Get public URL
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(fileName);
+    const clipUrl = data.publicUrl;
+
+    const totalDuration = ((Date.now() - startTotalTime) / 1000).toFixed(2);
+    console.log(`✅ Clip uploaded: ${clipUrl}`);
+    console.log(`⏱️ Total processing time: ${totalDuration}s`);
 
     // ================================
-    // Step 4: Cleanup Local Files
-    // ================================
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(outputPath);
-
-    console.log("🧹 Local temp files deleted");
-
-    // ================================
-    // Step 5: Return Supabase URL
+    // Return Supabase URL
     // ================================
     return res.json({
       success: true,
       clipUrl,
+      processingTime: totalDuration
     });
   } catch (error) {
     console.error("❌ Server Error:", error);
@@ -160,9 +187,16 @@ app.post("/api/clip", async (req, res) => {
 });
 
 // ================================
+// Health Check
+// ================================
+app.get("/", (req, res) => {
+  res.json({ status: "FFmpeg Clip Server is running" });
+});
+
+// ================================
 // Start Server
 // ================================
-const PORT = process.env.PORT || 5000; // fallback for local dev
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`🚀 FFmpeg Clip Server Running on Port ${PORT}`);
