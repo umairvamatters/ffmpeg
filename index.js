@@ -6,18 +6,22 @@ import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { execSync } from "child_process";
+import fetch from "node-fetch";
+
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
-const ffmpegPath = (() => {
-  try {
-    return execSync("which ffmpeg").toString().trim(); // Mac/Linux
-  } catch {
-    return "C:\\ffmpeg\\bin\\ffmpeg.exe"; // Windows fallback (adjust your path)
-  }
-})();
+
+let ffmpegPath = "ffmpeg";
+
+try {
+  ffmpegPath = execSync("which ffmpeg").toString().trim();
+  console.log("✅ FFmpeg found at:", ffmpegPath);
+} catch {
+  console.log("⚠️ FFmpeg not installed, using default path");
+}
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 // ================================
@@ -228,6 +232,6 @@ app.get("/", (req, res) => {
 // ================================
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 FFmpeg Clip Server Running on Port ${PORT}`);
 });
