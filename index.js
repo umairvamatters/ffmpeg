@@ -174,6 +174,30 @@ app.post("/api/clip", async (req, res) => {
     console.log(`✅ Clip uploaded: ${clipUrl}`);
     console.log(`⏱️ Total processing time: ${totalDuration}s`);
 
+
+    const callbackPayload = {
+      user_id: req.body.user_id,
+      video_id: req.body.video_id,
+      clipUrl,
+      privacyStatus: "public",
+    };
+
+    const callbackResponse = await fetch(
+  `${process.env.SUPABASE_URL}/functions/v1/worker-upload-callback`,
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify(callbackPayload),
+  }
+);
+
+const callbackResult = await callbackResponse.json();
+
+console.log("✅ Callback Response:", callbackResult);
+
     // ================================
     // Return Supabase URL
     // ================================
